@@ -10,6 +10,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import confusion_matrix
 import copy
+torch.manual_seed(42)
 df = pd.read_csv('Indian_IPO_Market_Data.csv')
 print("First 5 rows: ", df.head())
 print("\nLast 5 rows: ", df.tail())
@@ -87,6 +88,9 @@ print(target_correlations[1:])
 feature_columns = ['Subscription_QIB', 'Subscription_HNI', 'Subscription_RII', 'Issue_Price', 'Issue_Size']
 X = df[feature_columns].copy()
 y = df['Listing_Gains_Profit'].copy()
+skewed_columns = ['Subscription_QIB', 'Subscription_HNI', 'Subscription_RII', 'Issue_Price', 'Issue_Size']
+for col in skewed_columns:
+    X[col] = np.log1p(X[col])
 print(f"\nFeature matrix shape: {X.shape}")
 print(f"Target vector shape: {y.shape}")
 X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size = 0.2,stratify = y, random_state = 42)
@@ -177,7 +181,6 @@ model = nn.Sequential(
     nn.Linear(32, 16),
     nn.ReLU(),
     nn.Linear(16, 1),
-    nn.Sigmoid()
 )
 print("Model created successfully.")
 print(model)
@@ -200,8 +203,8 @@ with torch.no_grad():
         print(f" Sample actual targets: {batch_targets[:5].tolist()}")
         break
 print(f"\nPerfect! Our model can process batches of {batch_features.shape[0]} IPOs and produce probability predictions between 0 and 1.")
-criterion = nn.BCELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.00075)
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(1.3))
+optimizer = optim.Adam(model.parameters(), lr=0.003)
 train_accuracies = []
 val_accuracies = []
 num_epochs = 100
@@ -215,14 +218,14 @@ for epoch in range(num_epochs):
         optimizer.step()
     model.eval()
     with torch.no_grad():
-        train_outputs = model(X_train_tensor).squeeze()
-        train_predictions = (train_outputs > 0.5).float()
+        train_outputs = torch.sigmoid(model(X_train_tensor).squeeze())
+        train_predictions = (train_outputs > 0.45).float()
         train_accuracy = (train_predictions == y_train_tensor).float().mean().item() * 100
         val_correct = 0
         val_total = 0
         for val_features, val_targets in val_loader:
-            val_outputs = model(val_features).squeeze()
-            val_predictions = (val_outputs > 0.5).float()
+            val_outputs = torch.sigmoid(model(val_features).squeeze())
+            val_predictions = (val_outputs > 0.45).float()
             val_correct += (val_predictions == val_targets).sum().item()
             val_total += val_targets.size(0)
         val_accuracy = (val_correct / val_total) * 100
@@ -263,13 +266,12 @@ reg_model = nn.Sequential(
     nn.Linear(32, 16),
     nn.ReLU(),
     nn.Linear(16, 1),
-    nn.Sigmoid()
 )
 print("Regularized model created")
 print(f" Total parameters: {sum(param.numel() for param in reg_model.parameters()),}")
 print(reg_model)
-criterion = nn.BCELoss()
-optimizer = optim.Adam(reg_model.parameters(), lr=0.00075)
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(1.3))
+optimizer = optim.Adam(reg_model.parameters(), lr=0.003)
 best_val_accuracy = 0
 patience = 20
 patience_counter = 0
@@ -290,14 +292,14 @@ for epoch in range(max_epochs):
         optimizer.step()
     reg_model.eval()
     with torch.no_grad():
-        train_outputs = reg_model(X_train_tensor).squeeze()
-        train_predictions = (train_outputs > 0.5).float()
+        train_outputs = torch.sigmoid(reg_model(X_train_tensor).squeeze())
+        train_predictions = (train_outputs > 0.45).float()
         train_accuracy = (train_predictions == y_train_tensor).float().mean().item() * 100
         val_correct = 0
         val_total = 0
         for val_features, val_targets in val_loader:
-            val_outputs = reg_model(val_features).squeeze()
-            val_predictions = (val_outputs > 0.5).float()
+            val_outputs = torch.sigmoid(reg_model(val_features).squeeze())
+            val_predictions = (val_outputs > 0.45).float()
             val_correct += (val_predictions == val_targets).sum().item()
             val_total += val_targets.size(0)
         val_accuracy = (val_correct / val_total) * 100
@@ -352,8 +354,8 @@ print(f" Our regularized model stopped early at epoch {len(reg_train_accuracies)
 print("This saved us from overtraining and gave us a model that should work better on new IPOs!")
 reg_model.eval()
 with torch.no_grad():
-    test_outputs = reg_model(X_test_tensor).squeeze()
-    test_predictions = (test_outputs > 0.48).float()
+    test_outputs = torch.sigmoid(reg_model(X_test_tensor).squeeze())
+    test_predictions = (test_outputs > 0.45).float()
 print(f" The regularized model made predictions on {len(y_test_tensor)} test IPOs")
 predicted_profitable = test_predictions.sum().item()
 print(f" It predicted {int(predicted_profitable)} would be profitable and {int(len(test_predictions) - predicted_profitable)} would not")
